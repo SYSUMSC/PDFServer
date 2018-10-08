@@ -13,7 +13,7 @@ import (
 
 var (
 	addr              = flag.String("addr", "192.168.1.102:8080", "TCP address to listen to")
-	dir               = flag.String("dir", "./", "Directory with trailing slash to serve static files from")
+	dir               = flag.String("dir", "./", "Directory to serve static files from")
 	ipnet             = flag.String("ipnet", "192.168.1", "IPNet to allow access from")
 	jsonSuccess       = []byte(`{"code": 200}`)
 	jsonWrongIPNet    = []byte(`{"code": 20000, "msg": "不在同一网段，请您到指定地点参与二试"}`)
@@ -162,7 +162,7 @@ func handler(ctx *fasthttp.RequestCtx) {
 		}
 	default:
 		if match(path) {
-			ctx.SendFile(*dir + path + ".pdf")
+			ctx.SendFile(*dir + "/" + path + ".pdf")
 		} else {
 			ctx.Write(jsonWrongPassword)
 		}
