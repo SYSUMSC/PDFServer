@@ -1,0 +1,11 @@
+# OS X
+.DS_Store
+
+# editors
+.vscode
+.idea
+
+server.exe
+server
+!dist/server.exe
+!dist/server
