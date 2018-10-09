@@ -4,10 +4,13 @@ import (
 	"flag"
 	"io/ioutil"
 	"log"
+	"net"
+	"os"
 	"strconv"
 	"strings"
 	"unsafe"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/valyala/fasthttp"
 )
 
@@ -127,6 +130,23 @@ func bytes2string(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
 }
 
+func isLocalIP(ip string) (bool, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false, err
+	}
+	for _, addr := range addrs {
+		intf, _, err := net.ParseCIDR(addr.String())
+		if err != nil {
+			return false, err
+		}
+		if net.ParseIP(ip).Equal(intf) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func match(data string) bool {
 	isMatched := false
 	for _, key := range keys {
@@ -144,7 +164,7 @@ func handler(ctx *fasthttp.RequestCtx) {
 
 	// IP filtering
 	remote := ctx.RemoteIP().To4()
-	for i := 0; i < 3; i++ {
+	for i := 0; i < len(localnet); i++ {
 		if remote[i] != localnet[i] {
 			ctx.Write(jsonWrongIPNet)
 			return
@@ -181,9 +201,28 @@ func handler(ctx *fasthttp.RequestCtx) {
 func main() {
 	flag.Parse()
 
+	var err error
+
 	// validate addr argument
 	if *addr == "" {
 		log.Fatalln("addr cannot be empty")
+		return
+	}
+	if govalidator.IsDialString(*addr) != true {
+		log.Fatalln("addr format error")
+		return
+	}
+	h, _, err := net.SplitHostPort(*addr)
+	if err != nil {
+		log.Fatalln("unknown error")
+		return
+	}
+	if isLocal, err := isLocalIP(h); isLocal != true {
+		if err != nil {
+			log.Fatalln("local network error")
+		} else {
+			log.Fatalln("addr must be local")
+		}
 		return
 	}
 
@@ -192,14 +231,27 @@ func main() {
 		log.Fatalln("dir cannot be empty")
 		return
 	}
+	_, err = os.Stat(*dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Fatalln("dir cannot be found")
+		} else {
+			log.Fatalln("dir cannot be used for some reasons")
+		}
+		return
+	}
 
 	// validate ipnet argument
 	if *ipnet == "" {
 		log.Fatalln("ipnet cannot be empty")
 		return
 	}
+	if govalidator.IsIPv4(*ipnet+".1") != true {
+		log.Fatalln("ipnet format error")
+		return
+	}
 	arr := strings.Split(*ipnet, ".")
-	if len(arr) != 3 {
+	if len(arr) == 0 {
 		log.Fatalln("ipnet format error")
 		return
 	}
@@ -214,7 +266,10 @@ func main() {
 	files, _ := ioutil.ReadDir(*dir)
 	for _, f := range files {
 		if f.IsDir() == false {
-			keys = append(keys, strings.TrimSuffix(f.Name(), ".pdf"))
+			name := f.Name()
+			if strings.HasSuffix(name, ".pdf") == true {
+				keys = append(keys, strings.TrimSuffix(name, ".pdf"))
+			}
 		}
 	}
 
