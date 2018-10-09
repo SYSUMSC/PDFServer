@@ -12,14 +12,17 @@ import (
 )
 
 var (
-	addr              = flag.String("addr", "192.168.1.102:8080", "TCP address to listen to")
-	dir               = flag.String("dir", "./", "Directory to serve static files from")
-	ipnet             = flag.String("ipnet", "192.168.1", "IPNet to allow access from")
-	jsonSuccess       = []byte(`{"code": 200}`)
-	jsonWrongIPNet    = []byte(`{"code": 20000, "msg": "不在同一网段，请您到指定地点参与二试"}`)
-	jsonWrongPassword = []byte(`{"code": 20001, "msg": "输入的密码错误，请您重试"}`)
-	keys              = []string{}
-	localnet          = []byte{}
+	addr                 = flag.String("addr", "192.168.1.102:8080", "TCP address to listen to")
+	dir                  = flag.String("dir", "./", "Directory to serve static files from")
+	ipnet                = flag.String("ipnet", "192.168.1", "IPNet to allow access from")
+	jsonSuccess          = []byte(`{"code": 200}`)
+	jsonWrongIPNet       = []byte(`{"code": 20000, "msg": "不在同一网段，请您到指定地点参与二试"}`)
+	jsonWrongPassword    = []byte(`{"code": 20001, "msg": "输入的密码错误，请您重试"}`)
+	bytesContentTypeJSON = []byte("application/json")
+	bytesContentTypeHTML = []byte("text/html")
+	bytesContentTypePDF  = []byte("application/pdf")
+	keys                 = []string{}
+	localnet             = []byte{}
 )
 
 var indexPage = []byte(`
@@ -136,7 +139,7 @@ func match(data string) bool {
 }
 
 func handler(ctx *fasthttp.RequestCtx) {
-	ctx.Response.Header.SetContentType("application/json")
+	ctx.Response.Header.SetContentTypeBytes(bytesContentTypeJSON)
 	ctx.Response.Header.SetConnectionClose()
 
 	// IP filtering
@@ -148,10 +151,10 @@ func handler(ctx *fasthttp.RequestCtx) {
 		}
 	}
 
-	path := string((ctx.Path())[1:])
+	path := bytes2string((ctx.Path())[1:])
 	switch path {
 	case "":
-		ctx.Response.Header.SetContentType("text/html")
+		ctx.Response.Header.SetContentTypeBytes(bytesContentTypeHTML)
 		ctx.Write(indexPage)
 	case "api":
 		password := bytes2string(ctx.QueryArgs().Peek("password"))
@@ -162,7 +165,13 @@ func handler(ctx *fasthttp.RequestCtx) {
 		}
 	default:
 		if match(path) {
-			ctx.SendFile(*dir + "/" + path + ".pdf")
+			var builder strings.Builder
+			builder.WriteString(*dir)
+			builder.WriteString("/")
+			builder.WriteString(path)
+			builder.WriteString(".pdf")
+			ctx.Response.Header.SetContentTypeBytes(bytesContentTypePDF)
+			ctx.SendFile(builder.String())
 		} else {
 			ctx.Write(jsonWrongPassword)
 		}
