@@ -4,22 +4,28 @@ import (
 	"flag"
 	"io/ioutil"
 	"log"
+	"net"
+	"os"
 	"strconv"
 	"strings"
 	"unsafe"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/valyala/fasthttp"
 )
 
 var (
-	addr              = flag.String("addr", "192.168.1.102:8080", "TCP address to listen to")
-	dir               = flag.String("dir", "./", "Directory to serve static files from")
-	ipnet             = flag.String("ipnet", "192.168.1", "IPNet to allow access from")
-	jsonSuccess       = []byte(`{"code": 200}`)
-	jsonWrongIPNet    = []byte(`{"code": 20000, "msg": "不在同一网段，请您到指定地点参与二试"}`)
-	jsonWrongPassword = []byte(`{"code": 20001, "msg": "输入的密码错误，请您重试"}`)
-	keys              = []string{}
-	localnet          = []byte{}
+	addr                 = flag.String("addr", "192.168.1.102:8080", "TCP address to listen to")
+	dir                  = flag.String("dir", "./", "Directory to serve static files from")
+	ipnet                = flag.String("ipnet", "192.168.1", "IPNet to allow access from")
+	jsonSuccess          = []byte(`{"code": 200}`)
+	jsonWrongIPNet       = []byte(`{"code": 20000, "msg": "不在同一网段，请您到指定地点参与二试"}`)
+	jsonWrongPassword    = []byte(`{"code": 20001, "msg": "输入的密码错误，请您重试"}`)
+	bytesContentTypeJSON = []byte("application/json")
+	bytesContentTypeHTML = []byte("text/html")
+	bytesContentTypePDF  = []byte("application/pdf")
+	keys                 = []string{}
+	localnet             = []byte{}
 )
 
 var indexPage = []byte(`
@@ -124,6 +130,23 @@ func bytes2string(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
 }
 
+func isLocalIP(ip string) (bool, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false, err
+	}
+	for _, addr := range addrs {
+		intf, _, err := net.ParseCIDR(addr.String())
+		if err != nil {
+			return false, err
+		}
+		if net.ParseIP(ip).Equal(intf) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func match(data string) bool {
 	isMatched := false
 	for _, key := range keys {
@@ -136,22 +159,22 @@ func match(data string) bool {
 }
 
 func handler(ctx *fasthttp.RequestCtx) {
-	ctx.Response.Header.SetContentType("application/json")
+	ctx.Response.Header.SetContentTypeBytes(bytesContentTypeJSON)
 	ctx.Response.Header.SetConnectionClose()
 
 	// IP filtering
 	remote := ctx.RemoteIP().To4()
-	for i := 0; i < 3; i++ {
+	for i := 0; i < len(localnet); i++ {
 		if remote[i] != localnet[i] {
 			ctx.Write(jsonWrongIPNet)
 			return
 		}
 	}
 
-	path := string((ctx.Path())[1:])
+	path := bytes2string((ctx.Path())[1:])
 	switch path {
 	case "":
-		ctx.Response.Header.SetContentType("text/html")
+		ctx.Response.Header.SetContentTypeBytes(bytesContentTypeHTML)
 		ctx.Write(indexPage)
 	case "api":
 		password := bytes2string(ctx.QueryArgs().Peek("password"))
@@ -162,7 +185,13 @@ func handler(ctx *fasthttp.RequestCtx) {
 		}
 	default:
 		if match(path) {
-			ctx.SendFile(*dir + "/" + path + ".pdf")
+			var builder strings.Builder
+			builder.WriteString(*dir)
+			builder.WriteString("/")
+			builder.WriteString(path)
+			builder.WriteString(".pdf")
+			ctx.Response.Header.SetContentTypeBytes(bytesContentTypePDF)
+			ctx.SendFile(builder.String())
 		} else {
 			ctx.Write(jsonWrongPassword)
 		}
@@ -172,9 +201,28 @@ func handler(ctx *fasthttp.RequestCtx) {
 func main() {
 	flag.Parse()
 
+	var err error
+
 	// validate addr argument
 	if *addr == "" {
 		log.Fatalln("addr cannot be empty")
+		return
+	}
+	if govalidator.IsDialString(*addr) != true {
+		log.Fatalln("addr format error")
+		return
+	}
+	h, _, err := net.SplitHostPort(*addr)
+	if err != nil {
+		log.Fatalln("unknown error")
+		return
+	}
+	if isLocal, err := isLocalIP(h); isLocal != true {
+		if err != nil {
+			log.Fatalln("local network error")
+		} else {
+			log.Fatalln("addr must be local")
+		}
 		return
 	}
 
@@ -183,14 +231,27 @@ func main() {
 		log.Fatalln("dir cannot be empty")
 		return
 	}
+	_, err = os.Stat(*dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Fatalln("dir cannot be found")
+		} else {
+			log.Fatalln("dir cannot be used for some reasons")
+		}
+		return
+	}
 
 	// validate ipnet argument
 	if *ipnet == "" {
 		log.Fatalln("ipnet cannot be empty")
 		return
 	}
+	if govalidator.IsIPv4(*ipnet+".1") != true {
+		log.Fatalln("ipnet format error")
+		return
+	}
 	arr := strings.Split(*ipnet, ".")
-	if len(arr) != 3 {
+	if len(arr) == 0 {
 		log.Fatalln("ipnet format error")
 		return
 	}
@@ -205,7 +266,10 @@ func main() {
 	files, _ := ioutil.ReadDir(*dir)
 	for _, f := range files {
 		if f.IsDir() == false {
-			keys = append(keys, strings.TrimSuffix(f.Name(), ".pdf"))
+			name := f.Name()
+			if strings.HasSuffix(name, ".pdf") == true {
+				keys = append(keys, strings.TrimSuffix(name, ".pdf"))
+			}
 		}
 	}
 
