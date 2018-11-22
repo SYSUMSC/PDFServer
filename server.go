@@ -242,18 +242,15 @@ func main() {
 	}
 
 	// validate ipnet argument
-	if *ipnet == "" {
-		log.Fatalln("ipnet cannot be empty")
-		return
+	if *ipnet != "" {
+		if govalidator.IsIPv4(*ipnet) && govalidator.IsIPv4(*ipnet+".") != true && govalidator.IsIPv4(*ipnet+".1.") && govalidator.IsIPv4(*ipnet+".1.1.") {
+			log.Fatalln("ipnet format error")
+			return
+		}
 	}
-	if govalidator.IsIPv4(*ipnet+".1") != true {
-		log.Fatalln("ipnet format error")
-		return
-	}
-	arr := strings.Split(*ipnet, ".")
-	if len(arr) == 0 {
-		log.Fatalln("ipnet format error")
-		return
+	var arr []string
+	if *ipnet != "" {
+		arr = strings.Split(*ipnet, ".")
 	}
 
 	// establish rules for IP filtering
